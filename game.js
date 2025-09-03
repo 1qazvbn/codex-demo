@@ -1,3 +1,5 @@
+const DEBUG = false;
+const GAME_VERSION = '0.2.0';
 const WIDTH = 1280;
 const HEIGHT = 720;
 const GRAVITY = 0.5;
@@ -7,6 +9,39 @@ const FRICTION = 0.8;
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+
+const pendingResources = [];
+
+const DPR = window.devicePixelRatio || 1;
+canvas.width = WIDTH * DPR;
+canvas.height = HEIGHT * DPR;
+canvas.style.width = WIDTH + 'px';
+canvas.style.height = HEIGHT + 'px';
+ctx.scale(DPR, DPR);
+
+const overlay = document.createElement('div');
+overlay.style.position = 'fixed';
+overlay.style.top = '0';
+overlay.style.left = '0';
+overlay.style.width = '100%';
+overlay.style.height = '100%';
+overlay.style.background = 'rgba(0,0,0,0.8)';
+overlay.style.color = '#fff';
+overlay.style.display = 'none';
+overlay.style.whiteSpace = 'pre-wrap';
+overlay.style.fontFamily = 'monospace';
+overlay.style.padding = '20px';
+document.body.appendChild(overlay);
+
+function showError(err) {
+  overlay.textContent = err && err.stack ? err.stack : String(err);
+  overlay.style.display = 'block';
+}
+
+window.onerror = (msg, src, line, col, err) => {
+  showError(err || { message: msg, stack: `${src}:${line}:${col}` });
+};
+window.addEventListener('unhandledrejection', (e) => showError(e.reason));
 
 const keys = {};
 window.addEventListener('keydown', (e) => {
@@ -56,15 +91,40 @@ class Sprite {
 }
 
 class SpriteFromSVG extends Sprite {
-  constructor(x, y, width, height, svg) {
+  constructor(x, y, width, height, svg, fallback) {
     super(x, y, width, height);
-    const blob = new Blob([svg], { type: 'image/svg+xml' });
-    this.img = new Image();
-    this.img.src = URL.createObjectURL(blob);
+    this.img = null;
+    this.loaded = false;
+    this.fallback =
+      fallback ||
+      ((ctx, s) => {
+        ctx.fillStyle = '#ccc';
+        ctx.fillRect(s.x, s.y, s.width, s.height);
+      });
+    if (typeof Blob !== 'undefined' && typeof Image !== 'undefined') {
+      try {
+        const blob = new Blob([svg], { type: 'image/svg+xml' });
+        this.img = new Image();
+        const p = new Promise((resolve) => {
+          this.img.onload = () => {
+            this.loaded = true;
+            resolve();
+          };
+          this.img.onerror = () => resolve();
+        });
+        this.img.src = URL.createObjectURL(blob);
+        pendingResources.push(p);
+      } catch (e) {
+        /* ignore */
+      }
+    }
   }
-  draw(ctx) {
-    if (!this.img) return;
-    ctx.drawImage(this.img, this.x, this.y, this.width, this.height);
+  draw(ctx, renderer) {
+    if (this.img && this.loaded) {
+      ctx.drawImage(this.img, this.x, this.y, this.width, this.height);
+    } else {
+      this.fallback(ctx, this, renderer);
+    }
   }
 }
 
@@ -122,12 +182,23 @@ class Renderer {
     ctx.textAlign = 'left';
     ctx.fillText(`Coins: ${collected}/${total}`, 20, 30);
     ctx.fillText('WASD/Arrows to move, Space to jump', 20, 60);
+    ctx.textAlign = 'right';
+    ctx.fillText(`v${GAME_VERSION}`, WIDTH - 20, 30);
+    ctx.textAlign = 'left';
     if (win) {
       ctx.textAlign = 'center';
       ctx.fillText('You win!', WIDTH / 2, HEIGHT / 2);
     }
     ctx.restore();
   }
+}
+
+function drawBackground() {
+  const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  sky.addColorStop(0, '#87ceeb');
+  sky.addColorStop(1, '#e0f6ff');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
 }
 
 function drawRoundRect(ctx, x, y, w, h, r) {
@@ -320,7 +391,13 @@ class Coin extends SpriteFromSVG {
       <circle cx='20' cy='20' r='18' fill='url(#g)'/>
       <circle cx='14' cy='14' r='6' fill='rgba(255,255,255,0.6)'/>
     </svg>`;
-    super(x, y, size, size, svg);
+    const fallback = (ctx, s) => {
+      ctx.fillStyle = '#ffd700';
+      ctx.beginPath();
+      ctx.arc(s.x + s.width / 2, s.y + s.height / 2, s.width / 2, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    super(x, y, size, size, svg, fallback);
     this.phase = Math.random() * Math.PI * 2;
     this.collected = false;
   }
@@ -339,8 +416,13 @@ class Coin extends SpriteFromSVG {
       ctx.beginPath();
       ctx.arc(0, 0, this.width / 2, 0, Math.PI * 2);
       ctx.fill();
+    } else if (this.img && this.loaded) {
+      ctx.drawImage(this.img, -this.width / 2, -this.height / 2, this.width, this.height);
     } else {
-      super.draw(ctx);
+      ctx.fillStyle = '#ffd700';
+      ctx.beginPath();
+      ctx.arc(0, 0, this.width / 2, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
   }
@@ -400,7 +482,16 @@ class Cloud extends SpriteFromSVG {
       <circle cx='60' cy='30' r='20' fill='white'/>
       <circle cx='35' cy='30' r='20' fill='white'/>
     </svg>`;
-    super(x, y, 80, 50, svg);
+    const fallback = (ctx, s) => {
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(s.x + 25, s.y + 25, 20, 0, Math.PI * 2);
+      ctx.arc(s.x + 50, s.y + 20, 20, 0, Math.PI * 2);
+      ctx.arc(s.x + 60, s.y + 30, 20, 0, Math.PI * 2);
+      ctx.arc(s.x + 35, s.y + 30, 20, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    super(x, y, 80, 50, svg, fallback);
     this.speed = speed;
   }
   update() {
@@ -411,15 +502,6 @@ class Cloud extends SpriteFromSVG {
 
 const camera = new Camera();
 const renderer = new Renderer(ctx);
-
-const skyLayer = new Layer(0);
-skyLayer.setCustomDraw((ctx) => {
-  const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
-  sky.addColorStop(0, '#87ceeb');
-  sky.addColorStop(1, '#e0f6ff');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
-});
 
 const hillLayer = new Layer(0.3);
 let hillOffset = 0;
@@ -467,7 +549,6 @@ for (const c of coins) worldLayer.add(c);
 for (const e of enemies) worldLayer.add(e);
 worldLayer.add(player);
 
-renderer.addLayer(skyLayer);
 renderer.addLayer(hillLayer);
 renderer.addLayer(cloudLayer);
 renderer.addLayer(worldLayer);
@@ -493,17 +574,35 @@ function update() {
 }
 
 function draw() {
+  drawBackground();
   renderer.draw(camera);
   renderer.drawHUD(collected, totalCoins, win);
 }
 
+function drawLoading() {
+  drawBackground();
+  ctx.fillStyle = '#000';
+  ctx.font = '40px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Loading…', WIDTH / 2, HEIGHT / 2);
+}
+
 let lastTime = 0;
+let debugTimer = 0;
 function loop(timestamp) {
-  const dt = timestamp - lastTime;
-  lastTime = timestamp;
-  update(dt / 16.67);
-  draw();
-  requestAnimationFrame(loop);
+  try {
+    const dt = timestamp - lastTime;
+    lastTime = timestamp;
+    update(dt / 16.67);
+    draw();
+    if (DEBUG && timestamp - debugTimer > 1000) {
+      console.log('tick', Math.round(renderer._fps));
+      debugTimer = timestamp;
+    }
+    requestAnimationFrame(loop);
+  } catch (e) {
+    showError(e);
+  }
 }
 
 function resize() {
@@ -513,4 +612,11 @@ function resize() {
 
 window.addEventListener('resize', resize);
 resize();
-requestAnimationFrame(loop);
+drawLoading();
+Promise.all(pendingResources).then(() => {
+  try {
+    requestAnimationFrame(loop);
+  } catch (e) {
+    showError(e);
+  }
+});
