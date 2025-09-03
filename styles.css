@@ -9,7 +9,7 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: linear-gradient(#87ceeb, #e0f6ff);
+  background: #000;
 }
 
 canvas {
