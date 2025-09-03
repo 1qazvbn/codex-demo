@@ -101,8 +101,38 @@ class Player {
   }
 
   draw(ctx) {
+    // body
     ctx.fillStyle = '#0f0';
     ctx.fillRect(this.x, this.y, this.width, this.height);
+
+    // face
+    ctx.fillStyle = '#000';
+    // eyes
+    ctx.fillRect(this.x + this.width * 0.25, this.y + this.height * 0.3, 5, 5);
+    ctx.fillRect(this.x + this.width * 0.65, this.y + this.height * 0.3, 5, 5);
+
+    // mouth shows simple emotion: smile on ground, "o" when in air
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (this.onGround) {
+      ctx.arc(
+        this.x + this.width / 2,
+        this.y + this.height * 0.7,
+        8,
+        0,
+        Math.PI,
+      );
+      ctx.stroke();
+    } else {
+      ctx.arc(
+        this.x + this.width / 2,
+        this.y + this.height * 0.7,
+        5,
+        0,
+        Math.PI * 2,
+      );
+      ctx.stroke();
+    }
   }
 }
 
@@ -119,8 +149,12 @@ class Platform {
   }
 
   draw(ctx) {
-    ctx.fillStyle = '#555';
+    // brown base like a tree branch
+    ctx.fillStyle = '#8b4513';
     ctx.fillRect(this.x, this.y, this.width, this.height);
+    // green top to resemble grass
+    ctx.fillStyle = '#228b22';
+    ctx.fillRect(this.x, this.y, this.width, this.height / 4);
   }
 }
 
@@ -165,6 +199,7 @@ class Coin {
 class Enemy {
   constructor(x, y, width, height, minX, maxX, speed = 2) {
     this.x = x;
+    this.baseY = y;
     this.y = y;
     this.width = width;
     this.height = height;
@@ -172,6 +207,7 @@ class Enemy {
     this.maxX = maxX;
     this.speed = speed;
     this.vx = speed;
+    this.phase = 0;
   }
 
   update() {
@@ -179,30 +215,35 @@ class Enemy {
     if (this.x < this.minX || this.x + this.width > this.maxX) {
       this.vx *= -1;
     }
+    this.phase += 0.1;
+    // gentle vertical bobbing
+    this.y = this.baseY + Math.sin(this.phase * 2) * 5;
   }
 
   draw(ctx) {
-    ctx.fillStyle = 'red';
+    // blink red with sine intensity
+    const intensity = Math.floor(128 + 127 * Math.sin(this.phase * 5));
+    ctx.fillStyle = `rgb(${intensity},0,0)`;
     ctx.fillRect(this.x, this.y, this.width, this.height);
   }
 }
 
 const player = new Player(100, 600);
 const platforms = [
-  new Platform(0, 680, 400, 40),
-  new Platform(600, 680, 680, 40),
-  new Platform(200, 500, 200, 20),
-  new Platform(500, 400, 200, 20),
-  new Platform(900, 300, 200, 20),
+  new Platform(0, 680, 1280, 40),
+  new Platform(200, 560, 200, 20),
+  new Platform(450, 440, 200, 20),
+  new Platform(700, 320, 200, 20),
+  new Platform(950, 200, 200, 20),
 ];
 const coins = [
-  new Coin(50, 640),
-  new Coin(220, 460),
-  new Coin(520, 360),
-  new Coin(920, 260),
-  new Coin(1100, 640),
+  new Coin(100, 640),
+  new Coin(280, 520),
+  new Coin(530, 400),
+  new Coin(780, 280),
+  new Coin(1030, 160),
 ];
-const enemies = [new Enemy(650, 640, 40, 40, 600, 1200, 2)];
+const enemies = [new Enemy(600, 640, 40, 40, 500, 1200, 2)];
 
 const totalCoins = coins.length;
 let collected = 0;
@@ -221,6 +262,14 @@ function update() {
 
 function draw() {
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+  // background sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  sky.addColorStop(0, '#87ceeb');
+  sky.addColorStop(1, '#e0f6ff');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
   for (const p of platforms) p.draw(ctx);
   for (const c of coins) c.draw(ctx);
   for (const e of enemies) e.draw(ctx);
