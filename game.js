@@ -1,4 +1,4 @@
-const GAME_VERSION = '0.4.2';
+const GAME_VERSION = '0.4.3';
 const BASE_W = 960,
   BASE_H = 540;
 const GRAVITY = 0.6;
@@ -22,13 +22,40 @@ const THEME = {
   enemy: '#e74c3c',
   hud: '#fff',
   shadow: 'rgba(0,0,0,0.2)',
-  hatBrim: '#444',
-  hatCrown: '#555',
-  hatCrownShade: '#333',
-  hatBand: '#800080',
-  rabbitFur: '#fff',
-  rabbitNose: '#ff8080',
+  RABBIT: {
+    fur: '#fff',
+    furLight: '#f7f7f7',
+    hat: '#555',
+    hatDark: '#333',
+    innerEar: '#ffb0b0',
+    outline: '#000',
+  },
 };
+
+const RABBIT_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 160">
+  <g stroke="${THEME.RABBIT.outline}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <!-- hat -->
+    <ellipse cx="60" cy="20" rx="50" ry="12" fill="${THEME.RABBIT.hat}" />
+    <rect x="30" y="0" width="60" height="40" rx="10" fill="${THEME.RABBIT.hatDark}" />
+    <rect x="30" y="15" width="60" height="8" fill="${THEME.RABBIT.hat}" />
+    <!-- head -->
+    <ellipse cx="60" cy="100" rx="35" ry="40" fill="${THEME.RABBIT.fur}" />
+    <ellipse cx="45" cy="100" rx="12" ry="14" fill="${THEME.RABBIT.furLight}" />
+    <ellipse cx="75" cy="100" rx="12" ry="14" fill="${THEME.RABBIT.furLight}" />
+    <!-- nose -->
+    <polygon points="60,110 55,120 65,120" fill="${THEME.RABBIT.innerEar}" />
+    <!-- mouth -->
+    <path d="M50 122 Q60 128 70 122" fill="none" />
+    <!-- eyes -->
+    <circle cx="50" cy="90" r="8" fill="#fff" />
+    <circle cx="70" cy="90" r="8" fill="#fff" />
+    <circle cx="50" cy="90" r="3" fill="#000" />
+    <circle cx="70" cy="90" r="3" fill="#000" />
+    <!-- whiskers -->
+    <path d="M45 115 L20 110 M45 120 L20 120 M75 115 L100 110 M75 120 L100 120" fill="none" />
+  </g>
+</svg>`;
 
 function getParam(name) {
   return new URLSearchParams(location.search).get(name);
@@ -211,221 +238,26 @@ class RendererCartoon {
     const r = c.r || c.w / 2 || 8;
     ctx.save();
     ctx.translate(c.x + r, c.y + r);
-    const sway = Math.sin(t * 2) * 0.05;
-    ctx.scale(1 + sway, 1);
+    ctx.scale(1 + Math.sin(t * 2) * 0.05, 1);
     const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, 1, 0, 0, r);
-    grad.addColorStop(0, THEME.coinInner);
+    grad.addColorStop(0, '#fff');
+    grad.addColorStop(0.5, THEME.coinInner);
     grad.addColorStop(1, THEME.coinOuter);
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
     if (!this.safe) {
-      ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.beginPath();
-      ctx.arc(-r * 0.3, -r * 0.3, r * 0.5, 0, Math.PI * 2);
-      ctx.fill();
       ctx.strokeStyle = 'rgba(255,255,255,0.8)';
       ctx.lineWidth = this.safe ? 1 : 2;
-      const a = (t * 2) % (Math.PI * 2);
+      const a = ((t % 1.2) / 1.2) * Math.PI * 2;
       ctx.beginPath();
-      ctx.arc(0, 0, r * 0.9, a, a + 0.5);
+      ctx.arc(0, 0, r * 0.9, a, a + 0.3);
       ctx.stroke();
-      if ((t * 4) % 2 < 0.2) {
-        ctx.fillStyle = 'rgba(255,255,255,0.8)';
-        ctx.beginPath();
-        ctx.arc(r * 0.4, -r * 0.4, r * 0.2, 0, Math.PI * 2);
-        ctx.fill();
-      }
     }
     ctx.restore();
   }
 
-  drawPlayerRabbit(player, t) {
-    const ctx = this.ctx;
-    const w = player.w,
-      h = player.h;
-
-    // update ear spring
-    const target = -player.vx * 0.05 + (player.vy < 0 ? -player.vy * 0.02 : 0);
-    player._earVel += (target - player._earAngle) * 0.2;
-    player._earVel *= 0.8;
-    player._earAngle += player._earVel;
-
-    ctx.save();
-    if (!this.safe && Math.abs(player.vx) > MOVE_SPEED * 0.8) {
-      ctx.save();
-      ctx.globalAlpha = 0.3;
-      ctx.fillStyle = THEME.rabbitFur;
-      ctx.beginPath();
-      ctx.ellipse(
-        player.x + w / 2 - player.vx * 2,
-        player.y + h / 2,
-        w * 1.2,
-        h * 0.6,
-        0,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
-      ctx.restore();
-    }
-
-    ctx.translate(player.x + w / 2, player.y + h);
-    const breathe = 1 + Math.sin(t * 2) * 0.02;
-    let sx = player.onGround ? 1.1 : 0.9;
-    let sy = player.onGround ? 0.9 : 1.1;
-    sx = Math.min(Math.max(sx, 0.9), 1.1) * breathe;
-    sy = Math.min(Math.max(sy, 0.9), 1.1) * breathe;
-    ctx.scale(sx * player.face, sy);
-
-    // shadow under hat
-    ctx.save();
-    ctx.scale(1, 0.3);
-    ctx.fillStyle = THEME.shadow;
-    ctx.globalAlpha = player.onGround ? 0.3 : 0.1;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, w * 0.6, h * 0.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    const lineW = this.safe ? 2 : 3;
-    ctx.lineWidth = lineW;
-    ctx.strokeStyle = '#000';
-
-    // brim
-    ctx.fillStyle = THEME.hatBrim;
-    ctx.beginPath();
-    ctx.ellipse(0, -h - 4, w, h * 0.2, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // crown
-    const crownH = h * 0.8;
-    const crownW = w * 0.6;
-    const grad = ctx.createLinearGradient(-crownW / 2, 0, crownW / 2, 0);
-    grad.addColorStop(0, THEME.hatCrownShade);
-    grad.addColorStop(0.5, THEME.hatCrown);
-    grad.addColorStop(1, THEME.hatCrownShade);
-    ctx.fillStyle = grad;
-    const r = w * 0.1;
-    ctx.beginPath();
-    ctx.moveTo(-crownW / 2, -h - crownH + r);
-    ctx.quadraticCurveTo(-crownW / 2, -h - crownH, -crownW / 2 + r, -h - crownH);
-    ctx.lineTo(crownW / 2 - r, -h - crownH);
-    ctx.quadraticCurveTo(crownW / 2, -h - crownH, crownW / 2, -h - crownH + r);
-    ctx.lineTo(crownW / 2, -h - r);
-    ctx.quadraticCurveTo(crownW / 2, -h, crownW / 2 - r, -h);
-    ctx.lineTo(-crownW / 2 + r, -h);
-    ctx.quadraticCurveTo(-crownW / 2, -h, -crownW / 2, -h - r);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // band
-    ctx.fillStyle = THEME.hatBand;
-    ctx.fillRect(-crownW / 2, -h - crownH * 0.6, crownW, crownH * 0.15);
-
-    // highlight
-    if (!this.safe) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(-crownW / 2 + 2, -h - crownH + 4);
-      ctx.lineTo(-crownW / 4, -h - 4);
-      ctx.stroke();
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = lineW;
-    }
-
-    // head
-    ctx.fillStyle = THEME.rabbitFur;
-    ctx.beginPath();
-    ctx.ellipse(0, -h, w * 0.4, h * 0.35, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // face
-    let blinking = false;
-    if (!this.safe) {
-      if (!player._nextBlink || t > player._nextBlink) {
-        player._blinkUntil = t + 0.12;
-        player._nextBlink = t + 3 + Math.random() * 2;
-      }
-      if (player._blinkUntil > t) blinking = true;
-    }
-    ctx.fillStyle = '#000';
-    const eyeY = -h - h * 0.1;
-    const eyeX = w * 0.1;
-    if (blinking) {
-      ctx.beginPath();
-      ctx.moveTo(-eyeX - 2, eyeY);
-      ctx.lineTo(-eyeX + 2, eyeY);
-      ctx.moveTo(eyeX - 2, eyeY);
-      ctx.lineTo(eyeX + 2, eyeY);
-      ctx.stroke();
-    } else {
-      ctx.beginPath();
-      ctx.arc(-eyeX, eyeY, 2, 0, Math.PI * 2);
-      ctx.arc(eyeX, eyeY, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // nose
-    ctx.fillStyle = THEME.rabbitNose;
-    ctx.beginPath();
-    ctx.moveTo(0, -h + 4);
-    ctx.lineTo(-2, -h + 8);
-    ctx.lineTo(2, -h + 8);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // mouth
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = lineW;
-    ctx.beginPath();
-    if (!player.onGround && player.vy < 0) {
-      ctx.arc(0, -h + 10, 4, 0, Math.PI * 2);
-    } else {
-      ctx.arc(0, -h + 10, 6, 0, Math.PI, false);
-    }
-    ctx.stroke();
-
-    // whiskers
-    ctx.beginPath();
-    ctx.moveTo(-4, -h + 8);
-    ctx.lineTo(-10, -h + 6);
-    ctx.moveTo(-4, -h + 11);
-    ctx.lineTo(-10, -h + 11);
-    ctx.moveTo(4, -h + 8);
-    ctx.lineTo(10, -h + 6);
-    ctx.moveTo(4, -h + 11);
-    ctx.lineTo(10, -h + 11);
-    ctx.stroke();
-
-    // ears
-    const earW = w * 0.2;
-    const earH = h * 0.9;
-    const angle = player._earAngle;
-    const drawEar = (sign) => {
-      ctx.save();
-      ctx.translate(sign * w * 0.2, -h - earH * 0.2);
-      ctx.rotate(angle * sign);
-      ctx.fillStyle = THEME.rabbitFur;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.quadraticCurveTo(sign * earW, -earH * 0.5, 0, -earH);
-      ctx.quadraticCurveTo(-sign * earW, -earH * 0.5, 0, 0);
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
-    };
-    drawEar(-1);
-    drawEar(1);
-
-    ctx.restore();
-  }
 
   drawPlayer(player, t) {
     const ctx = this.ctx;
@@ -547,6 +379,190 @@ class RendererCartoon {
   }
 }
 
+class RabbitPainter {
+  constructor() {
+    this.bitmap = null;
+    if (typeof createImageBitmap === 'function') {
+      const blob = new Blob([RABBIT_SVG], { type: 'image/svg+xml' });
+      createImageBitmap(blob)
+        .then((img) => {
+          this.bitmap = img;
+        })
+        .catch(() => {
+          this.bitmap = null;
+        });
+    }
+  }
+
+  _updateEars(player) {
+    if (!player._ears) {
+      player._ears = {
+        L: { angle: 0, vel: 0 },
+        R: { angle: 0, vel: 0 },
+      };
+    }
+    const target = -player.vx * 0.05 + (player.vy < 0 ? -player.vy * 0.02 : 0);
+    for (const k of ['L', 'R']) {
+      const e = player._ears[k];
+      e.vel += (target - e.angle) * 0.2;
+      e.vel *= 0.8;
+      e.angle += e.vel;
+    }
+  }
+
+  _drawEar(ctx, sign, ear, w, h) {
+    ctx.save();
+    ctx.translate(sign * w * 0.25, -h);
+    ctx.rotate(ear.angle);
+    ctx.fillStyle = THEME.RABBIT.fur;
+    ctx.beginPath();
+    ctx.ellipse(0, -h * 0.5, w * 0.15, h * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = THEME.RABBIT.outline;
+    ctx.lineWidth = renderer.safe ? 2 : 3;
+    ctx.stroke();
+    ctx.fillStyle = THEME.RABBIT.innerEar;
+    ctx.beginPath();
+    ctx.ellipse(0, -h * 0.5, w * 0.07, h * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  _blink(ctx, player, w, h, t) {
+    if (renderer.safe) return;
+    if (!player._nextBlink || t > player._nextBlink) {
+      player._blinkUntil = t + 0.12;
+      player._nextBlink = t + 3 + Math.random() * 2;
+    }
+    if (player._blinkUntil && t < player._blinkUntil) {
+      const eyeY = -h * 0.4;
+      const eyeX = w * 0.17;
+      ctx.beginPath();
+      ctx.moveTo(-eyeX - 2, eyeY);
+      ctx.lineTo(-eyeX + 2, eyeY);
+      ctx.moveTo(eyeX - 2, eyeY);
+      ctx.lineTo(eyeX + 2, eyeY);
+      ctx.stroke();
+    }
+  }
+
+  _drawBase(ctx, w, h) {
+    // hat brim
+    ctx.fillStyle = THEME.RABBIT.hat;
+    ctx.beginPath();
+    ctx.ellipse(0, -h + h * 0.2, w * 0.9, h * 0.15, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // crown
+    const crownH = h * 0.5;
+    const crownW = w * 0.6;
+    ctx.fillStyle = THEME.RABBIT.hatDark;
+    ctx.beginPath();
+    ctx.rect(-crownW / 2, -h - crownH + h * 0.2, crownW, crownH);
+    ctx.fill();
+    ctx.stroke();
+
+    // band
+    ctx.fillStyle = THEME.RABBIT.hat;
+    ctx.fillRect(-crownW / 2, -h - crownH + h * 0.4, crownW, h * 0.08);
+
+    // head
+    ctx.fillStyle = THEME.RABBIT.fur;
+    ctx.beginPath();
+    ctx.ellipse(0, -h * 0.3, w * 0.4, h * 0.45, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // cheeks
+    ctx.fillStyle = THEME.RABBIT.furLight;
+    ctx.beginPath();
+    ctx.ellipse(-w * 0.15, -h * 0.3, w * 0.13, h * 0.12, 0, 0, Math.PI * 2);
+    ctx.ellipse(w * 0.15, -h * 0.3, w * 0.13, h * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // nose
+    ctx.fillStyle = THEME.RABBIT.innerEar;
+    ctx.beginPath();
+    ctx.moveTo(0, -h * 0.2);
+    ctx.lineTo(-w * 0.05, -h * 0.1);
+    ctx.lineTo(w * 0.05, -h * 0.1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // mouth
+    ctx.beginPath();
+    ctx.arc(0, -h * 0.05, w * 0.1, 0, Math.PI);
+    ctx.stroke();
+
+    // eyes
+    const eyeY = -h * 0.4;
+    const eyeX = w * 0.17;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(-eyeX, eyeY, w * 0.06, 0, Math.PI * 2);
+    ctx.arc(eyeX, eyeY, w * 0.06, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(-eyeX, eyeY, w * 0.02, 0, Math.PI * 2);
+    ctx.arc(eyeX, eyeY, w * 0.02, 0, Math.PI * 2);
+    ctx.fill();
+
+    // whiskers
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.05, -h * 0.1);
+    ctx.lineTo(-w * 0.25, -h * 0.15);
+    ctx.moveTo(-w * 0.05, -h * 0.05);
+    ctx.lineTo(-w * 0.25, -h * 0.05);
+    ctx.moveTo(w * 0.05, -h * 0.1);
+    ctx.lineTo(w * 0.25, -h * 0.15);
+    ctx.moveTo(w * 0.05, -h * 0.05);
+    ctx.lineTo(w * 0.25, -h * 0.05);
+    ctx.stroke();
+  }
+
+  draw(ctx, player, camera, t) {
+    const w = player.w * 1.1;
+    const h = player.h * 1.1;
+    this._updateEars(player);
+
+    ctx.save();
+    ctx.translate(player.x + player.w / 2, player.y + player.h);
+
+    const breathe = 1 + Math.sin(t * 2) * 0.02;
+    let sx = player.onGround ? 1.08 : 0.92;
+    let sy = player.onGround ? 0.92 : 1.08;
+    sx = Math.min(Math.max(sx, 0.9), 1.1) * breathe;
+    sy = Math.min(Math.max(sy, 0.9), 1.1) * breathe;
+    ctx.scale(sx * player.face, sy);
+
+    // shadow
+    ctx.save();
+    ctx.scale(1, 0.3);
+    ctx.fillStyle = THEME.shadow;
+    ctx.globalAlpha = player.onGround ? 0.3 : 0.1;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w * 0.6, h * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // ears behind
+    this._drawEar(ctx, -1, player._ears.L, w, h);
+    this._drawEar(ctx, 1, player._ears.R, w, h);
+
+    if (this.bitmap) {
+      ctx.drawImage(this.bitmap, -w / 2, -h, w, h);
+    } else {
+      this._drawBase(ctx, w, h);
+    }
+
+    this._blink(ctx, player, w, h, t);
+    ctx.restore();
+  }
+}
+
 class RendererClassic {
   constructor(ctx) {
     this.ctx = ctx;
@@ -599,6 +615,8 @@ const renderer =
   RENDER_MODE === 'cartoon'
     ? new RendererCartoon(ctx)
     : new RendererClassic(ctx);
+
+const rabbitPainter = RENDER_MODE === 'cartoon' ? new RabbitPainter() : null;
 
 class Input {
   constructor() {
@@ -869,8 +887,12 @@ function draw(t) {
   for (const p of asArray(world.platforms)) renderer.drawPlatform(p);
   for (const c of asArray(world.coins)) renderer.drawCoin(c, t);
   for (const e of asArray(world.enemies)) renderer.drawEnemy(e, t);
-  if (RENDER_MODE === 'cartoon' && SKIN === 'rabbit')
-    renderer.drawPlayerRabbit(player, t);
+  if (
+    RENDER_MODE === 'cartoon' &&
+    SKIN === 'rabbit_svg' &&
+    rabbitPainter
+  )
+    rabbitPainter.draw(ctx, player, camera, t);
   else renderer.drawPlayer(player, t);
   Particles.draw(ctx);
   ctx.restore();
