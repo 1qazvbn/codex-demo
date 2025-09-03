@@ -1,4 +1,4 @@
-const GAME_VERSION = '0.4.3';
+const GAME_VERSION = '0.6.0';
 const BASE_W = 960,
   BASE_H = 540;
 const GRAVITY = 0.6;
@@ -97,7 +97,297 @@ window.onerror = (msg, src, line, col, err) => {
   showError(err || { message: msg, stack: `${src}:${line}:${col}` });
 };
 window.addEventListener('unhandledrejection', (e) => showError(e.reason));
+if (RENDER_MODE === 'runner') {
+  const Runner = {};
+  (function (R) {
+    const DT = 1 / 60;
+    const PX = 140;
+    const FOG = 0.0025;
+    let DRAW_DIST = 4000;
+    const CHUNK_MIN = 800, CHUNK_MAX = 1200;
+    const SPEED_MIN = 40, SPEED_MAX = 240;
+    const ACCEL = 18, DECEL = 14;
+    const STEER_ACCEL = 22;
+    const STEER_MAX = 18;
+    const SAFE = BASE_W < 720;
+    if (SAFE) DRAW_DIST = 2800;
 
+    R.Input = {
+      left: false,
+      right: false,
+      boost: false,
+      init() {
+        window.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') this.left = true;
+          if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') this.right = true;
+          if (e.key === ' ') { this.boost = true; e.preventDefault(); }
+        });
+        window.addEventListener('keyup', (e) => {
+          if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') this.left = false;
+          if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') this.right = false;
+          if (e.key === ' ') this.boost = false;
+        });
+        const mkBtn = (txt, left) => {
+          const b = document.createElement('button');
+          b.textContent = txt;
+          b.style.position = 'fixed';
+          b.style.bottom = '20px';
+          b.style[left ? 'left' : 'right'] = '20px';
+          b.style.fontSize = '32px';
+          b.style.opacity = '0.5';
+          document.body.appendChild(b);
+          b.addEventListener('touchstart', (e) => { e.preventDefault(); this[left ? 'left' : 'right'] = true; });
+          b.addEventListener('touchend', () => { this[left ? 'left' : 'right'] = false; });
+        };
+        mkBtn('◀', true);
+        mkBtn('▶', false);
+      },
+    };
+
+    R.Particles = {
+      list: [],
+      emit(x, y, count, color) {
+        count = SAFE ? Math.ceil(count * 0.5) : count;
+        for (let i = 0; i < count; i++) {
+          this.list.push({ x, y, vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2, life: 1, color: color || '#fff' });
+        }
+      },
+      update(dt) {
+        for (let i = this.list.length - 1; i >= 0; i--) {
+          const p = this.list[i];
+          p.x += p.vx * 60 * dt;
+          p.y += p.vy * 60 * dt;
+          p.life -= dt;
+          if (p.life <= 0) this.list.splice(i, 1);
+        }
+      },
+      draw(ctx) {
+        ctx.save();
+        for (const p of this.list) {
+          ctx.globalAlpha = Math.max(p.life, 0);
+          ctx.fillStyle = p.color;
+          ctx.fillRect(p.x, p.y, 2, 2);
+        }
+        ctx.restore();
+      },
+    };
+
+    R.Camera = class {
+      constructor() {
+        this.x = 0;
+        this.shakeX = 0;
+        this.shakeY = 0;
+      }
+      update(core) {
+        this.x += (core.player.x - this.x) * 0.1;
+        this.shakeX *= 0.9;
+        this.shakeY *= 0.9;
+      }
+    };
+
+    R.HUD = {
+      draw(ctx, core) {
+        ctx.fillStyle = '#fff';
+        ctx.font = '16px monospace';
+        ctx.fillText(`v: ${core.player.v.toFixed(0)}`, 10, 20);
+        ctx.fillText(`x${core.multiplier.toFixed(1)}`, 10, 40);
+        ctx.fillText(`score: ${core.score | 0}`, 10, 60);
+        ctx.fillText(`sun: ${core.sunTime.toFixed(1)}`, 10, 80);
+        ctx.fillText(`v${GAME_VERSION}`, 10, BASE_H - 10);
+        if (core.gameOver) {
+          ctx.textAlign = 'center';
+          ctx.fillText('GAME OVER', BASE_W / 2, BASE_H / 2);
+          ctx.textAlign = 'start';
+        }
+      },
+    };
+
+    class RNG {
+      constructor(seed) { this.seed = seed || 1; }
+      next() { return this.seed = (this.seed * 16807) % 2147483647; }
+      rand() { return (this.next() - 1) / 2147483646; }
+    }
+
+    R.Generator = class {
+      constructor() {
+        this.objects = [];
+        this.farZ = 0;
+        this.rng = new RNG(1);
+      }
+      spawnChunk() {
+        const len = CHUNK_MIN + this.rng.rand() * (CHUNK_MAX - CHUNK_MIN);
+        const lanes = [-3, -1, 1, 3];
+        const gap = Math.floor(this.rng.rand() * lanes.length);
+        for (let z = this.farZ; z < this.farZ + len; z += 200) {
+          for (let i = 0; i < lanes.length; i++) {
+            if (i === gap) continue;
+            if (this.rng.rand() < 0.5) this.objects.push({ type: 'obs', x: lanes[i], z });
+          }
+        }
+        const sunZ = this.farZ + len * 0.5;
+        this.objects.push({ type: 'sun', x: lanes[Math.floor(this.rng.rand() * lanes.length)], z: sunZ });
+        this.farZ += len;
+      }
+      update(core) {
+        const dz = core.dz;
+        for (let i = this.objects.length - 1; i >= 0; i--) {
+          const o = this.objects[i];
+          o.z -= dz;
+          if (o.z < -50) this.objects.splice(i, 1);
+        }
+        while (this.farZ < core.drawDist) this.spawnChunk();
+      }
+    };
+
+    R.Renderer = class {
+      constructor(ctx, cam) {
+        this.ctx = ctx;
+        this.cam = cam;
+        this.horizonY = BASE_H * 0.35;
+        this.groundDepth = BASE_H * 0.6;
+      }
+      project(x, z) {
+        const k = 1 / (1 + z * FOG);
+        const sx = BASE_W / 2 + (x - this.cam.x) * k * PX;
+        const sy = this.horizonY + (1 - k) * this.groundDepth;
+        return { sx, sy, k };
+      }
+      draw(core) {
+        const ctx = this.ctx;
+        ctx.clearRect(0, 0, BASE_W, BASE_H);
+        ctx.fillStyle = '#222';
+        ctx.fillRect(0, this.horizonY, BASE_W, BASE_H - this.horizonY);
+        const objs = core.generator.objects.slice().sort((a, b) => b.z - a.z);
+        for (const o of objs) {
+          const p = this.project(o.x, o.z);
+          const size = 20 * p.k;
+          ctx.save();
+          ctx.globalAlpha = Math.max(p.k - 0.1, 0);
+          if (o.type === 'obs') {
+            ctx.fillStyle = '#555';
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.fillRect(p.sx - size / 2, p.sy - size, size, size);
+            ctx.strokeRect(p.sx - size / 2, p.sy - size, size, size);
+          } else if (o.type === 'sun') {
+            ctx.fillStyle = '#ff0';
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy - size, size * 0.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+          ctx.save();
+          ctx.globalAlpha = 0.2 * p.k;
+          ctx.fillStyle = '#000';
+          ctx.beginPath();
+          ctx.ellipse(p.sx, p.sy, size * 0.6, size * 0.2, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+        const playerP = this.project(core.player.x, 0);
+        const ps = 25 * playerP.k;
+        ctx.fillStyle = '#3cba54';
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.fillRect(playerP.sx - ps / 2, playerP.sy - ps, ps, ps);
+        ctx.strokeRect(playerP.sx - ps / 2, playerP.sy - ps, ps, ps);
+        R.Particles.draw(ctx);
+        R.HUD.draw(ctx, core);
+      }
+    };
+
+    R.Core = class {
+      constructor() {
+        this.player = { x: 0, vx: 0, v: SPEED_MIN };
+        this.multiplier = 1;
+        this.score = 0;
+        this.sunTime = 30;
+        this.boost = 1;
+        this.boostTimer = 0;
+        this.boostCooldown = 0;
+        this.dz = 0;
+        this.drawDist = DRAW_DIST;
+        this.generator = new R.Generator();
+        this.camera = new R.Camera();
+        this.gameOver = false;
+      }
+      update() {
+        const input = R.Input;
+        if (input.left) this.player.vx -= STEER_ACCEL * DT;
+        if (input.right) this.player.vx += STEER_ACCEL * DT;
+        this.player.vx *= 0.9;
+        this.player.vx = Math.max(Math.min(this.player.vx, STEER_MAX), -STEER_MAX);
+        this.player.x += this.player.vx * DT;
+
+        const targetV = SPEED_MIN + (SPEED_MAX - SPEED_MIN) * 0.5;
+        if (this.player.v < targetV) this.player.v = Math.min(targetV, this.player.v + ACCEL * DT);
+        else this.player.v = Math.max(targetV, this.player.v - DECEL * DT);
+
+        if (input.boost && this.boostCooldown <= 0) {
+          this.boost = 1.15;
+          this.boostTimer = 1.5;
+          this.boostCooldown = 6;
+          input.boost = false;
+        }
+        if (this.boostTimer > 0) this.boostTimer -= DT;
+        else this.boost = 1;
+        if (this.boostCooldown > 0) this.boostCooldown -= DT;
+
+        this.dz = this.player.v * this.boost * DT;
+        this.generator.update(this);
+        this.camera.update(this);
+        R.Particles.update(DT);
+
+        for (let i = this.generator.objects.length - 1; i >= 0; i--) {
+          const o = this.generator.objects[i];
+          if (o.z > 50) continue;
+          if (o.type === 'obs') {
+            const hit = Math.abs(o.x - this.player.x) < 0.5;
+            if (hit) {
+              this.camera.shakeX = 5;
+              this.multiplier = 1;
+            } else if (Math.abs(o.x - this.player.x) < 0.7) {
+              this.multiplier = Math.min(this.multiplier + 0.1, 5);
+              R.Particles.emit(BASE_W / 2, BASE_H * 0.5, 10, '#fff');
+            }
+          } else if (o.type === 'sun') {
+            if (Math.abs(o.x - this.player.x) < 0.5) {
+              this.sunTime += 5;
+              R.Particles.emit(BASE_W / 2, BASE_H * 0.3, 20, '#ff0');
+              this.generator.objects.splice(i, 1);
+            }
+          }
+        }
+
+        this.score += this.player.v * DT * this.multiplier;
+        this.sunTime -= DT;
+        if (this.sunTime <= 0) this.gameOver = true;
+        this.multiplier += (1 - this.multiplier) * 0.01;
+      }
+    };
+
+    R.start = function () {
+      R.Input.init();
+      const core = new R.Core();
+      const renderer = new R.Renderer(ctx, core.camera);
+      let acc = 0;
+      let last = performance.now();
+      function frame(now) {
+        const dt = Math.min((now - last) / 1000, 0.1);
+        last = now;
+        acc += dt;
+        while (acc >= DT) {
+          core.update();
+          acc -= DT;
+        }
+        renderer.draw(core);
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    };
+  })(Runner);
+  Runner.start();
+} else {
 const Easing = {
   easeInOut: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2),
   back: (t) => 1 + --t * t * (3 * t + 1),
@@ -945,3 +1235,5 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 requestAnimationFrame(loop);
+
+}
