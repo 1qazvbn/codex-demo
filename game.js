@@ -1,4 +1,4 @@
-const GAME_VERSION = '0.4.0';
+const GAME_VERSION = '0.4.2';
 const BASE_W = 960,
   BASE_H = 540;
 const GRAVITY = 0.6;
@@ -22,6 +22,12 @@ const THEME = {
   enemy: '#e74c3c',
   hud: '#fff',
   shadow: 'rgba(0,0,0,0.2)',
+  hatBrim: '#444',
+  hatCrown: '#555',
+  hatCrownShade: '#333',
+  hatBand: '#800080',
+  rabbitFur: '#fff',
+  rabbitNose: '#ff8080',
 };
 
 function getParam(name) {
@@ -29,6 +35,7 @@ function getParam(name) {
 }
 
 const RENDER_MODE = getParam('mode') || 'classic';
+const SKIN = getParam('skin') || 'slime';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -204,7 +211,7 @@ class RendererCartoon {
     const r = c.r || c.w / 2 || 8;
     ctx.save();
     ctx.translate(c.x + r, c.y + r);
-    const sway = Math.sin(t * 2) * 0.1;
+    const sway = Math.sin(t * 2) * 0.05;
     ctx.scale(1 + sway, 1);
     const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, 1, 0, 0, r);
     grad.addColorStop(0, THEME.coinInner);
@@ -218,6 +225,12 @@ class RendererCartoon {
       ctx.beginPath();
       ctx.arc(-r * 0.3, -r * 0.3, r * 0.5, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = this.safe ? 1 : 2;
+      const a = (t * 2) % (Math.PI * 2);
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.9, a, a + 0.5);
+      ctx.stroke();
       if ((t * 4) % 2 < 0.2) {
         ctx.fillStyle = 'rgba(255,255,255,0.8)';
         ctx.beginPath();
@@ -225,6 +238,192 @@ class RendererCartoon {
         ctx.fill();
       }
     }
+    ctx.restore();
+  }
+
+  drawPlayerRabbit(player, t) {
+    const ctx = this.ctx;
+    const w = player.w,
+      h = player.h;
+
+    // update ear spring
+    const target = -player.vx * 0.05 + (player.vy < 0 ? -player.vy * 0.02 : 0);
+    player._earVel += (target - player._earAngle) * 0.2;
+    player._earVel *= 0.8;
+    player._earAngle += player._earVel;
+
+    ctx.save();
+    if (!this.safe && Math.abs(player.vx) > MOVE_SPEED * 0.8) {
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = THEME.rabbitFur;
+      ctx.beginPath();
+      ctx.ellipse(
+        player.x + w / 2 - player.vx * 2,
+        player.y + h / 2,
+        w * 1.2,
+        h * 0.6,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.translate(player.x + w / 2, player.y + h);
+    const breathe = 1 + Math.sin(t * 2) * 0.02;
+    let sx = player.onGround ? 1.1 : 0.9;
+    let sy = player.onGround ? 0.9 : 1.1;
+    sx = Math.min(Math.max(sx, 0.9), 1.1) * breathe;
+    sy = Math.min(Math.max(sy, 0.9), 1.1) * breathe;
+    ctx.scale(sx * player.face, sy);
+
+    // shadow under hat
+    ctx.save();
+    ctx.scale(1, 0.3);
+    ctx.fillStyle = THEME.shadow;
+    ctx.globalAlpha = player.onGround ? 0.3 : 0.1;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w * 0.6, h * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const lineW = this.safe ? 2 : 3;
+    ctx.lineWidth = lineW;
+    ctx.strokeStyle = '#000';
+
+    // brim
+    ctx.fillStyle = THEME.hatBrim;
+    ctx.beginPath();
+    ctx.ellipse(0, -h - 4, w, h * 0.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // crown
+    const crownH = h * 0.8;
+    const crownW = w * 0.6;
+    const grad = ctx.createLinearGradient(-crownW / 2, 0, crownW / 2, 0);
+    grad.addColorStop(0, THEME.hatCrownShade);
+    grad.addColorStop(0.5, THEME.hatCrown);
+    grad.addColorStop(1, THEME.hatCrownShade);
+    ctx.fillStyle = grad;
+    const r = w * 0.1;
+    ctx.beginPath();
+    ctx.moveTo(-crownW / 2, -h - crownH + r);
+    ctx.quadraticCurveTo(-crownW / 2, -h - crownH, -crownW / 2 + r, -h - crownH);
+    ctx.lineTo(crownW / 2 - r, -h - crownH);
+    ctx.quadraticCurveTo(crownW / 2, -h - crownH, crownW / 2, -h - crownH + r);
+    ctx.lineTo(crownW / 2, -h - r);
+    ctx.quadraticCurveTo(crownW / 2, -h, crownW / 2 - r, -h);
+    ctx.lineTo(-crownW / 2 + r, -h);
+    ctx.quadraticCurveTo(-crownW / 2, -h, -crownW / 2, -h - r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // band
+    ctx.fillStyle = THEME.hatBand;
+    ctx.fillRect(-crownW / 2, -h - crownH * 0.6, crownW, crownH * 0.15);
+
+    // highlight
+    if (!this.safe) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-crownW / 2 + 2, -h - crownH + 4);
+      ctx.lineTo(-crownW / 4, -h - 4);
+      ctx.stroke();
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = lineW;
+    }
+
+    // head
+    ctx.fillStyle = THEME.rabbitFur;
+    ctx.beginPath();
+    ctx.ellipse(0, -h, w * 0.4, h * 0.35, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // face
+    let blinking = false;
+    if (!this.safe) {
+      if (!player._nextBlink || t > player._nextBlink) {
+        player._blinkUntil = t + 0.12;
+        player._nextBlink = t + 3 + Math.random() * 2;
+      }
+      if (player._blinkUntil > t) blinking = true;
+    }
+    ctx.fillStyle = '#000';
+    const eyeY = -h - h * 0.1;
+    const eyeX = w * 0.1;
+    if (blinking) {
+      ctx.beginPath();
+      ctx.moveTo(-eyeX - 2, eyeY);
+      ctx.lineTo(-eyeX + 2, eyeY);
+      ctx.moveTo(eyeX - 2, eyeY);
+      ctx.lineTo(eyeX + 2, eyeY);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.arc(-eyeX, eyeY, 2, 0, Math.PI * 2);
+      ctx.arc(eyeX, eyeY, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // nose
+    ctx.fillStyle = THEME.rabbitNose;
+    ctx.beginPath();
+    ctx.moveTo(0, -h + 4);
+    ctx.lineTo(-2, -h + 8);
+    ctx.lineTo(2, -h + 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // mouth
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = lineW;
+    ctx.beginPath();
+    if (!player.onGround && player.vy < 0) {
+      ctx.arc(0, -h + 10, 4, 0, Math.PI * 2);
+    } else {
+      ctx.arc(0, -h + 10, 6, 0, Math.PI, false);
+    }
+    ctx.stroke();
+
+    // whiskers
+    ctx.beginPath();
+    ctx.moveTo(-4, -h + 8);
+    ctx.lineTo(-10, -h + 6);
+    ctx.moveTo(-4, -h + 11);
+    ctx.lineTo(-10, -h + 11);
+    ctx.moveTo(4, -h + 8);
+    ctx.lineTo(10, -h + 6);
+    ctx.moveTo(4, -h + 11);
+    ctx.lineTo(10, -h + 11);
+    ctx.stroke();
+
+    // ears
+    const earW = w * 0.2;
+    const earH = h * 0.9;
+    const angle = player._earAngle;
+    const drawEar = (sign) => {
+      ctx.save();
+      ctx.translate(sign * w * 0.2, -h - earH * 0.2);
+      ctx.rotate(angle * sign);
+      ctx.fillStyle = THEME.rabbitFur;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(sign * earW, -earH * 0.5, 0, -earH);
+      ctx.quadraticCurveTo(-sign * earW, -earH * 0.5, 0, 0);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    };
+    drawEar(-1);
+    drawEar(1);
+
     ctx.restore();
   }
 
@@ -476,6 +675,10 @@ class Player {
     this.lastOnGroundAt = 0;
     this.lastJumpPressedAt = -Infinity;
     this.face = 1;
+    this._earAngle = 0;
+    this._earVel = 0;
+    this._blinkUntil = 0;
+    this._nextBlink = 0;
   }
 }
 
@@ -666,7 +869,9 @@ function draw(t) {
   for (const p of asArray(world.platforms)) renderer.drawPlatform(p);
   for (const c of asArray(world.coins)) renderer.drawCoin(c, t);
   for (const e of asArray(world.enemies)) renderer.drawEnemy(e, t);
-  renderer.drawPlayer(player, t);
+  if (RENDER_MODE === 'cartoon' && SKIN === 'rabbit')
+    renderer.drawPlayerRabbit(player, t);
+  else renderer.drawPlayer(player, t);
   Particles.draw(ctx);
   ctx.restore();
   renderer.drawHUD(world, hasFocus);
