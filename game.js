@@ -1,5 +1,5 @@
-const DEBUG = false;
-const GAME_VERSION = '0.2.0';
+const GAME_VERSION = "0.2.2";
+const DEBUG = true;
 const WIDTH = 1280;
 const HEIGHT = 720;
 const GRAVITY = 0.5;
@@ -32,6 +32,24 @@ overlay.style.whiteSpace = 'pre-wrap';
 overlay.style.fontFamily = 'monospace';
 overlay.style.padding = '20px';
 document.body.appendChild(overlay);
+
+const world = {
+  platforms: [],
+  enemies: [],
+  coins: [],
+  player: null,
+};
+
+function asArray(v) {
+  if (Array.isArray(v)) return v;
+  if (v && Array.isArray(v.items)) return v.items;
+  return [];
+}
+
+if (!Array.isArray(world.platforms)) {
+  if (DEBUG) console.warn('world.platforms not array');
+  world.platforms = [];
+}
 
 function showError(err) {
   overlay.textContent = err && err.stack ? err.stack : String(err);
@@ -86,8 +104,8 @@ class Sprite {
     this.width = width;
     this.height = height;
   }
-  update() {}
-  draw(ctx) {}
+  update(dt, world) {}
+  draw(ctx, renderer) {}
 }
 
 class SpriteFromSVG extends Sprite {
@@ -140,14 +158,16 @@ class Layer {
   setCustomDraw(fn) {
     this.customDraw = fn;
   }
-  update(dt) {
-    for (const s of this.sprites) s.update(dt);
+  update(dt, world) {
+    const sprites = asArray(this.sprites);
+    for (const s of sprites) s.update(dt, world);
   }
   draw(ctx, camera, renderer) {
     ctx.save();
     ctx.translate(-camera.x * this.parallax, -camera.y * this.parallax);
     if (this.customDraw) this.customDraw(ctx, renderer);
-    for (const s of this.sprites) s.draw(ctx, renderer);
+    const sprites = asArray(this.sprites);
+    for (const s of sprites) s.draw(ctx, renderer);
     ctx.restore();
   }
 }
@@ -163,16 +183,18 @@ class Renderer {
   addLayer(layer) {
     this.layers.push(layer);
   }
-  update(dt) {
+  update(dt, world) {
     const now = performance.now();
     const fps = 1000 / (now - this._last);
     this._fps = fps * 0.05 + this._fps * 0.95;
     this._last = now;
     this.safeMode = this._fps < 40;
-    for (const l of this.layers) l.update(dt);
+    const layers = asArray(this.layers);
+    for (const l of layers) l.update(dt, world);
   }
   draw(camera) {
-    for (const l of this.layers) l.draw(this.ctx, camera, this);
+    const layers = asArray(this.layers);
+    for (const l of layers) l.draw(this.ctx, camera, this);
   }
   drawHUD(collected, total, win) {
     const ctx = this.ctx;
@@ -237,7 +259,9 @@ class Player extends Sprite {
     this.disableInput = false;
     this.respawnTimer = 0;
   }
-  update(platforms, enemies) {
+  update(dt, world) {
+    const platforms = asArray(world.platforms);
+    const enemies = asArray(world.enemies);
     const left = keys['a'] || keys['arrowleft'];
     const right = keys['d'] || keys['arrowright'];
     const jump = keys['w'] || keys['arrowup'] || keys[' '];
@@ -347,7 +371,7 @@ class Enemy extends Sprite {
     this.eyeOpen = true;
     this.blinkTimer = Math.random() * 120 + 60;
   }
-  update() {
+  update(dt, world) {
     this.x += this.vx;
     if (this.x < this.minX || this.x + this.width > this.maxX) {
       this.vx *= -1;
@@ -401,7 +425,7 @@ class Coin extends SpriteFromSVG {
     this.phase = Math.random() * Math.PI * 2;
     this.collected = false;
   }
-  update() {
+  update(dt, world) {
     this.phase += 0.1;
   }
   draw(ctx, renderer) {
@@ -494,7 +518,7 @@ class Cloud extends SpriteFromSVG {
     super(x, y, 80, 50, svg, fallback);
     this.speed = speed;
   }
-  update() {
+  update(dt, world) {
     this.x += this.speed;
     if (this.x > WIDTH + 50) this.x = -100;
   }
@@ -527,50 +551,47 @@ cloudLayer.add(new Cloud(400, 160, 0.25));
 
 const worldLayer = new Layer(1);
 
-const player = new Player(100, 600);
-const platforms = [
+world.player = new Player(100, 600);
+world.platforms = [
   new Platform(0, 680, 1280),
   new Platform(200, 560, 200),
   new Platform(450, 440, 200),
   new Platform(700, 320, 200),
   new Platform(950, 200, 200),
 ];
-const coins = [
+world.coins = [
   new Coin(100, 640),
   new Coin(280, 520),
   new Coin(530, 400),
   new Coin(780, 280),
   new Coin(1030, 160),
 ];
-const enemies = [new Enemy(600, 640, 40, 40, 500, 1200, 2)];
+world.enemies = [new Enemy(600, 640, 40, 40, 500, 1200, 2)];
 
-for (const p of platforms) worldLayer.add(p);
-for (const c of coins) worldLayer.add(c);
-for (const e of enemies) worldLayer.add(e);
-worldLayer.add(player);
+for (const p of asArray(world.platforms)) worldLayer.add(p);
+for (const c of asArray(world.coins)) worldLayer.add(c);
+for (const e of asArray(world.enemies)) worldLayer.add(e);
+worldLayer.add(world.player);
 
 renderer.addLayer(hillLayer);
 renderer.addLayer(cloudLayer);
 renderer.addLayer(worldLayer);
 
-camera.follow(player);
+camera.follow(world.player);
 
-const totalCoins = coins.length;
+const totalCoins = asArray(world.coins).length;
 let collected = 0;
 let win = false;
 
-function update() {
-  player.update(platforms, enemies);
-  for (const e of enemies) e.update();
-  for (const c of coins) {
-    c.update();
-    if (c.collect(player)) {
+function update(dt) {
+  renderer.update(dt, world);
+  for (const c of asArray(world.coins)) {
+    if (c.collect(world.player)) {
       collected++;
       if (collected === totalCoins) win = true;
     }
   }
   camera.update();
-  renderer.update();
 }
 
 function draw() {
@@ -597,6 +618,7 @@ function loop(timestamp) {
     draw();
     if (DEBUG && timestamp - debugTimer > 1000) {
       console.log('tick', Math.round(renderer._fps));
+      console.log('types:', Array.isArray(world.platforms), Array.isArray(world.enemies), Array.isArray(world.coins));
       debugTimer = timestamp;
     }
     requestAnimationFrame(loop);
