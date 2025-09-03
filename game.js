@@ -1,4 +1,4 @@
-const GAME_VERSION = '0.2.3';
+const GAME_VERSION = '0.3.0';
 const BASE_W = 960,
   BASE_H = 540;
 const GRAVITY = 0.6;
@@ -8,6 +8,21 @@ const COYOTE_MS = 100;
 const JUMP_BUFFER_MS = 120;
 const FRICTION = 0.85;
 const DEBUG = true;
+const THEME = {
+  skyTop: '#8ec5fc',
+  skyBottom: '#e0c3fc',
+  hill: '#274e13',
+  cloud: '#fff',
+  platformTop: '#b87333',
+  platformBottom: '#5d3a1a',
+  grass: '#3cb043',
+  coinOuter: '#ffdd00',
+  coinInner: '#fff6a3',
+  player: '#3cba54',
+  enemy: '#e74c3c',
+  hud: '#fff',
+  shadow: 'rgba(0,0,0,0.2)',
+};
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -42,6 +57,200 @@ window.onerror = (msg, src, line, col, err) => {
   showError(err || { message: msg, stack: `${src}:${line}:${col}` });
 };
 window.addEventListener('unhandledrejection', (e) => showError(e.reason));
+
+class Renderer {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.safe = false;
+  }
+
+  drawBackground(camera, t) {
+    const ctx = this.ctx;
+    const grad = ctx.createLinearGradient(0, 0, 0, BASE_H);
+    grad.addColorStop(0, THEME.skyTop);
+    grad.addColorStop(1, THEME.skyBottom);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, BASE_W, BASE_H);
+
+    // distant hills
+    ctx.save();
+    ctx.translate(-camera.x * 0.2, -camera.y * 0.2);
+    ctx.fillStyle = THEME.hill;
+    ctx.beginPath();
+    ctx.arc(200, BASE_H, 400, Math.PI, 0);
+    ctx.arc(800, BASE_H, 300, Math.PI, 0);
+    ctx.lineTo(BASE_W, BASE_H);
+    ctx.lineTo(0, BASE_H);
+    ctx.fill();
+    ctx.restore();
+
+    // clouds
+    ctx.save();
+    const w = BASE_W;
+    const offset = ((t * 20 - camera.x * 0.5) % w) - w;
+    ctx.translate(offset, -camera.y * 0.1);
+    ctx.fillStyle = THEME.cloud;
+    for (let i = 0; i < 3; i++) {
+      const x = i * w;
+      this._cloud(x + 200, 80);
+      this._cloud(x + 600, 130);
+    }
+    ctx.restore();
+  }
+
+  _cloud(x, y) {
+    const ctx = this.ctx;
+    ctx.beginPath();
+    ctx.arc(x, y, 20, 0, Math.PI * 2);
+    ctx.arc(x + 25, y + 10, 25, 0, Math.PI * 2);
+    ctx.arc(x + 55, y, 20, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawPlatform(p) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    if (!this.safe) {
+      ctx.fillStyle = THEME.shadow;
+      ctx.fillRect(0, p.h, p.w, 4);
+    }
+    const grad = ctx.createLinearGradient(0, 0, 0, p.h);
+    grad.addColorStop(0, THEME.platformTop);
+    grad.addColorStop(1, THEME.platformBottom);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, p.w, p.h);
+    ctx.fillStyle = THEME.grass;
+    ctx.beginPath();
+    const step = 8;
+    for (let x = 0; x < p.w; x += step) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x + step / 2, -4);
+      ctx.lineTo(x + step, 0);
+    }
+    ctx.fill();
+    ctx.restore();
+  }
+
+  drawCoin(c, t) {
+    const ctx = this.ctx;
+    const r = c.r || c.w / 2 || 8;
+    ctx.save();
+    ctx.translate(c.x + r, c.y + r);
+    const sway = Math.sin(t * 2) * 0.1;
+    ctx.scale(1 + sway, 1);
+    const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, 1, 0, 0, r);
+    grad.addColorStop(0, THEME.coinInner);
+    grad.addColorStop(1, THEME.coinOuter);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  drawPlayer(player, t) {
+    const ctx = this.ctx;
+    const w = player.w,
+      h = player.h;
+    ctx.save();
+    ctx.translate(player.x + w / 2, player.y + h);
+    const breathe = 1 + Math.sin(t * 2) * 0.02;
+    const sx = (player.onGround ? 1.05 : 0.95) * breathe;
+    const sy = (player.onGround ? 0.95 : 1.05) * breathe;
+    ctx.scale(sx, sy);
+    ctx.fillStyle = THEME.player;
+    const r = 8;
+    ctx.beginPath();
+    ctx.moveTo(-w / 2, -h + r);
+    ctx.quadraticCurveTo(-w / 2, -h, -w / 2 + r, -h);
+    ctx.lineTo(w / 2 - r, -h);
+    ctx.quadraticCurveTo(w / 2, -h, w / 2, -h + r);
+    ctx.lineTo(w / 2, -r);
+    ctx.quadraticCurveTo(w / 2, 0, w / 2 - r, 0);
+    ctx.lineTo(-w / 2 + r, 0);
+    ctx.quadraticCurveTo(-w / 2, 0, -w / 2, -r);
+    ctx.closePath();
+    ctx.fill();
+
+    // face
+    ctx.translate(player.face * 2, 0);
+    ctx.fillStyle = '#000';
+    const eyeY = -h * 0.6;
+    ctx.beginPath();
+    ctx.arc(-5, eyeY, 2, 0, Math.PI * 2);
+    ctx.arc(5, eyeY, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(0, -h * 0.5, 6, 0, Math.PI, false);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawEnemy(e, t) {
+    const ctx = this.ctx;
+    const w = e.w,
+      h = e.h;
+    const bounce = Math.sin(t * 3 + e.x) * 2;
+    ctx.save();
+    ctx.translate(e.x + w / 2, e.y + h + bounce);
+    ctx.fillStyle = THEME.enemy;
+    const r = 8;
+    ctx.beginPath();
+    ctx.moveTo(-w / 2, -h + r);
+    ctx.quadraticCurveTo(-w / 2, -h, -w / 2 + r, -h);
+    ctx.lineTo(w / 2 - r, -h);
+    ctx.quadraticCurveTo(w / 2, -h, w / 2, -h + r);
+    ctx.lineTo(w / 2, -r);
+    ctx.quadraticCurveTo(w / 2, 0, w / 2 - r, 0);
+    ctx.lineTo(-w / 2 + r, 0);
+    ctx.quadraticCurveTo(-w / 2, 0, -w / 2, -r);
+    ctx.closePath();
+    ctx.fill();
+
+    let blinking = false;
+    if (!this.safe) {
+      if (!e._blinkUntil && Math.random() < 0.005) {
+        e._blinkUntil = t + 0.15;
+      }
+      if (e._blinkUntil && t < e._blinkUntil) blinking = true;
+      if (e._blinkUntil && t >= e._blinkUntil) e._blinkUntil = 0;
+    }
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    if (blinking) {
+      ctx.beginPath();
+      ctx.moveTo(-5, -h * 0.6);
+      ctx.lineTo(-1, -h * 0.6);
+      ctx.moveTo(5, -h * 0.6);
+      ctx.lineTo(1, -h * 0.6);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(-5, -h * 0.6, 2, 0, Math.PI * 2);
+      ctx.arc(5, -h * 0.6, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  drawHUD(focus) {
+    const ctx = this.ctx;
+    ctx.fillStyle = THEME.hud;
+    ctx.font = '14px monospace';
+    const lines = [
+      'Arrows/A/D to move, Space/W/Up to jump',
+      `v${GAME_VERSION}`,
+    ];
+    if (!focus) lines.push('Click canvas to focus');
+    lines.forEach((t, i) => ctx.fillText(t, 10, 20 + i * 16));
+  }
+}
+
+const renderer = new Renderer(ctx);
 
 class Input {
   constructor() {
@@ -247,23 +456,17 @@ function update(dt) {
   updateCamera();
 }
 
-function draw() {
+function draw(t) {
   ctx.clearRect(0, 0, BASE_W, BASE_H);
+  renderer.drawBackground(camera, t);
   ctx.save();
   ctx.translate(-camera.x, -camera.y);
-  ctx.fillStyle = '#654321';
-  for (const p of asArray(world.platforms)) {
-    ctx.fillRect(p.x, p.y, p.w, p.h);
-  }
-  ctx.fillStyle = '#0af';
-  ctx.fillRect(player.x, player.y, player.w, player.h);
+  for (const p of asArray(world.platforms)) renderer.drawPlatform(p);
+  for (const c of asArray(world.coins)) renderer.drawCoin(c, t);
+  for (const e of asArray(world.enemies)) renderer.drawEnemy(e, t);
+  renderer.drawPlayer(player, t);
   ctx.restore();
-
-  ctx.fillStyle = '#fff';
-  ctx.font = '14px monospace';
-  const lines = ['Arrows/A/D to move, Space/W/Up to jump', `v${GAME_VERSION}`];
-  if (!hasFocus) lines.push('Click canvas to focus');
-  lines.forEach((t, i) => ctx.fillText(t, 10, 20 + i * 16));
+  renderer.drawHUD(hasFocus);
 }
 
 let last = 0;
@@ -271,6 +474,7 @@ let acc = 0;
 const dt = 1 / 60;
 let fpsTime = 0;
 let fpsFrames = 0;
+let fps = 60;
 
 function loop(ts) {
   try {
@@ -284,10 +488,13 @@ function loop(ts) {
       update(dt);
       acc -= dt;
     }
-    draw();
+    draw(seconds);
     fpsFrames++;
-    if (DEBUG && ts - fpsTime > 1000) {
-      console.log('fps', fpsFrames);
+    const elapsed = ts - fpsTime;
+    if (elapsed > 1000) {
+      fps = (fpsFrames * 1000) / elapsed;
+      if (DEBUG) console.log('fps', Math.round(fps));
+      renderer.safe = DEBUG && fps < 30;
       fpsFrames = 0;
       fpsTime = ts;
     }
