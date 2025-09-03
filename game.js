@@ -1,4 +1,4 @@
-const GAME_VERSION = '0.3.0';
+const GAME_VERSION = '0.4.0';
 const BASE_W = 960,
   BASE_H = 540;
 const GRAVITY = 0.6;
@@ -23,6 +23,12 @@ const THEME = {
   hud: '#fff',
   shadow: 'rgba(0,0,0,0.2)',
 };
+
+function getParam(name) {
+  return new URLSearchParams(location.search).get(name);
+}
+
+const RENDER_MODE = getParam('mode') || 'classic';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -58,7 +64,65 @@ window.onerror = (msg, src, line, col, err) => {
 };
 window.addEventListener('unhandledrejection', (e) => showError(e.reason));
 
-class Renderer {
+const Easing = {
+  easeInOut: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2),
+  back: (t) => 1 + --t * t * (3 * t + 1),
+  elastic: (t) =>
+    t === 0 || t === 1
+      ? t
+      : Math.pow(2, -10 * t) * Math.sin(((t - 0.075) * 2 * Math.PI) / 0.3) + 1,
+};
+
+function tween(obj, prop, to, ms, easing = Easing.easeInOut) {
+  const from = obj[prop];
+  const start = performance.now();
+  return new Promise((resolve) => {
+    function step(now) {
+      const t = Math.min((now - start) / ms, 1);
+      obj[prop] = from + (to - from) * easing(t);
+      if (t < 1) requestAnimationFrame(step);
+      else resolve();
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+const Particles = {
+  list: [],
+  emit(x, y, count, color) {
+    if (renderer && renderer.safe) count = Math.min(count, 5);
+    for (let i = 0; i < count; i++) {
+      this.list.push({
+        x,
+        y,
+        vx: (Math.random() - 0.5) * 2,
+        vy: -Math.random() * 1.5,
+        life: 1,
+        color,
+      });
+    }
+  },
+  update(dt) {
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const p = this.list[i];
+      p.x += p.vx * 60 * dt;
+      p.y += p.vy * 60 * dt;
+      p.life -= dt;
+      if (p.life <= 0) this.list.splice(i, 1);
+    }
+  },
+  draw(ctx) {
+    ctx.save();
+    for (const p of this.list) {
+      ctx.globalAlpha = Math.max(p.life, 0);
+      ctx.fillStyle = p.color || '#fff';
+      ctx.fillRect(p.x, p.y, 2, 2);
+    }
+    ctx.restore();
+  },
+};
+
+class RendererCartoon {
   constructor(ctx) {
     this.ctx = ctx;
     this.safe = false;
@@ -129,6 +193,9 @@ class Renderer {
       ctx.lineTo(x + step, 0);
     }
     ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, p.w, p.h);
     ctx.restore();
   }
 
@@ -146,6 +213,18 @@ class Renderer {
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
+    if (!this.safe) {
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.beginPath();
+      ctx.arc(-r * 0.3, -r * 0.3, r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      if ((t * 4) % 2 < 0.2) {
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.beginPath();
+        ctx.arc(r * 0.4, -r * 0.4, r * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     ctx.restore();
   }
 
@@ -154,11 +233,28 @@ class Renderer {
     const w = player.w,
       h = player.h;
     ctx.save();
+    if (!this.safe && Math.abs(player.vx) > MOVE_SPEED * 0.8) {
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = THEME.player;
+      ctx.beginPath();
+      ctx.ellipse(
+        player.x + w / 2 - player.vx * 2,
+        player.y + h / 2,
+        w * 1.2,
+        h * 0.6,
+        0,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+      ctx.restore();
+    }
     ctx.translate(player.x + w / 2, player.y + h);
     const breathe = 1 + Math.sin(t * 2) * 0.02;
     const sx = (player.onGround ? 1.05 : 0.95) * breathe;
     const sy = (player.onGround ? 0.95 : 1.05) * breathe;
-    ctx.scale(sx, sy);
+    ctx.scale(sx * player.face, sy);
     ctx.fillStyle = THEME.player;
     const r = 8;
     ctx.beginPath();
@@ -172,17 +268,17 @@ class Renderer {
     ctx.quadraticCurveTo(-w / 2, 0, -w / 2, -r);
     ctx.closePath();
     ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    ctx.stroke();
 
     // face
-    ctx.translate(player.face * 2, 0);
     ctx.fillStyle = '#000';
     const eyeY = -h * 0.6;
     ctx.beginPath();
     ctx.arc(-5, eyeY, 2, 0, Math.PI * 2);
     ctx.arc(5, eyeY, 2, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(0, -h * 0.5, 6, 0, Math.PI, false);
     ctx.stroke();
@@ -237,12 +333,14 @@ class Renderer {
     ctx.restore();
   }
 
-  drawHUD(focus) {
+  drawHUD(world, focus) {
     const ctx = this.ctx;
     ctx.fillStyle = THEME.hud;
     ctx.font = '14px monospace';
+    const total = world.collected + world.coins.length;
     const lines = [
       'Arrows/A/D to move, Space/W/Up to jump',
+      `Coins: ${world.collected}/${total}`,
       `v${GAME_VERSION}`,
     ];
     if (!focus) lines.push('Click canvas to focus');
@@ -250,7 +348,58 @@ class Renderer {
   }
 }
 
-const renderer = new Renderer(ctx);
+class RendererClassic {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.safe = false;
+  }
+  drawBackground() {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#87ceeb';
+    ctx.fillRect(0, 0, BASE_W, BASE_H);
+  }
+  drawPlatform(p) {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#654321';
+    ctx.fillRect(p.x, p.y, p.w, p.h);
+  }
+  drawCoin(c) {
+    const ctx = this.ctx;
+    const r = c.r || 8;
+    ctx.fillStyle = '#ffdd00';
+    ctx.beginPath();
+    ctx.arc(c.x + r, c.y + r, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  drawEnemy(e) {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#e74c3c';
+    ctx.fillRect(e.x, e.y, e.w, e.h);
+  }
+  drawPlayer(player) {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#3cba54';
+    ctx.fillRect(player.x, player.y, player.w, player.h);
+  }
+  drawHUD(world, focus) {
+    const ctx = this.ctx;
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px monospace';
+    const total = world.collected + world.coins.length;
+    const lines = [
+      'Arrows/A/D to move, Space/W/Up to jump',
+      `Coins: ${world.collected}/${total}`,
+      `v${GAME_VERSION}`,
+    ];
+    if (!focus) lines.push('Click canvas to focus');
+    lines.forEach((t, i) => ctx.fillText(t, 10, 20 + i * 16));
+  }
+}
+
+const renderer =
+  RENDER_MODE === 'cartoon'
+    ? new RendererCartoon(ctx)
+    : new RendererClassic(ctx);
 
 class Input {
   constructor() {
@@ -309,7 +458,7 @@ canvas.addEventListener('blur', () => {
   hasFocus = false;
 });
 
-const world = { platforms: [], enemies: [], coins: [], player: null };
+const world = { platforms: [], enemies: [], coins: [], player: null, collected: 0 };
 
 function asArray(v) {
   return Array.isArray(v) ? v : [];
@@ -339,6 +488,15 @@ class Platform {
   }
 }
 
+class Coin {
+  constructor(x, y, r = 8) {
+    this.x = x;
+    this.y = y;
+    this.r = r;
+    this.w = this.h = r * 2;
+  }
+}
+
 function initWorld() {
   world.platforms = [
     new Platform(0, BASE_H - 20, 2000, 20),
@@ -347,7 +505,12 @@ function initWorld() {
     new Platform(650, BASE_H - 260, 120, 20),
   ];
   world.enemies = [];
-  world.coins = [];
+  world.coins = [
+    new Coin(240, BASE_H - 140),
+    new Coin(440, BASE_H - 220),
+    new Coin(690, BASE_H - 300),
+  ];
+  world.collected = 0;
   world.player = new Player();
 }
 
@@ -374,7 +537,22 @@ function findSpawnPlatform(world) {
 }
 
 const player = world.player;
-let camera = { x: 0, y: 0 };
+let camera = { x: 0, y: 0, shakeX: 0, shakeY: 0 };
+
+let shake = 0;
+function addShake(s) {
+  shake = Math.max(shake, s);
+}
+function applyShake() {
+  if (shake > 0) {
+    camera.shakeX = (Math.random() * 2 - 1) * shake;
+    camera.shakeY = (Math.random() * 2 - 1) * shake;
+    shake *= 0.9;
+    if (shake < 0.5) shake = 0;
+  } else {
+    camera.shakeX = camera.shakeY = 0;
+  }
+}
 
 const spawnPlat = findSpawnPlatform(world);
 player.x = spawnPlat.x + 8;
@@ -391,6 +569,7 @@ function rectsIntersect(a, b) {
 let prevJump = false;
 function updatePlayer(dt) {
   const now = performance.now();
+  const wasOnGround = player.onGround;
   player.onGround = false;
 
   if (input.jump && !prevJump) player.lastJumpPressedAt = now;
@@ -434,10 +613,30 @@ function updatePlayer(dt) {
         player.vy = 0;
         player.onGround = true;
         player.lastOnGroundAt = now;
+        if (!wasOnGround) {
+          Particles.emit(player.x + player.w / 2, player.y + player.h, 8, '#999');
+          addShake(5);
+        }
       } else if (player.vy < 0) {
         player.y = p.y + p.h;
         player.vy = 0;
       }
+    }
+  }
+}
+
+function updateCoins() {
+  for (let i = world.coins.length - 1; i >= 0; i--) {
+    const c = world.coins[i];
+    const px = player.x + player.w / 2;
+    const py = player.y + player.h / 2;
+    const dx = px - (c.x + c.r);
+    const dy = py - (c.y + c.r);
+    if (Math.hypot(dx, dy) < c.r + Math.min(player.w, player.h) / 2) {
+      world.coins.splice(i, 1);
+      world.collected++;
+      Particles.emit(c.x + c.r, c.y + c.r, 10, THEME.coinOuter);
+      addShake(2);
     }
   }
 }
@@ -453,20 +652,24 @@ function updateCamera() {
 
 function update(dt) {
   updatePlayer(dt);
+  updateCoins();
+  Particles.update(dt);
   updateCamera();
+  applyShake();
 }
 
 function draw(t) {
   ctx.clearRect(0, 0, BASE_W, BASE_H);
   renderer.drawBackground(camera, t);
   ctx.save();
-  ctx.translate(-camera.x, -camera.y);
+  ctx.translate(-camera.x + camera.shakeX, -camera.y + camera.shakeY);
   for (const p of asArray(world.platforms)) renderer.drawPlatform(p);
   for (const c of asArray(world.coins)) renderer.drawCoin(c, t);
   for (const e of asArray(world.enemies)) renderer.drawEnemy(e, t);
   renderer.drawPlayer(player, t);
+  Particles.draw(ctx);
   ctx.restore();
-  renderer.drawHUD(hasFocus);
+  renderer.drawHUD(world, hasFocus);
 }
 
 let last = 0;
@@ -494,7 +697,7 @@ function loop(ts) {
     if (elapsed > 1000) {
       fps = (fpsFrames * 1000) / elapsed;
       if (DEBUG) console.log('fps', Math.round(fps));
-      renderer.safe = DEBUG && fps < 30;
+      renderer.safe = fps < 30;
       fpsFrames = 0;
       fpsTime = ts;
     }
